@@ -128,8 +128,18 @@ install_system_deps () {
         return
     fi
 
-    dockerfile_url="https://raw.githubusercontent.com/swiftlang/swift-docker/main/nightly-main/$docker_platform_name/$docker_platform_version/Dockerfile"
-    set +e
+    if [[ "$docker_platform_name" == "debian" ]]; then
+        echo "Detected Debian platform."
+        set +o errexit
+        if [[ "$(id --user)" == "0" ]]; then
+            apt-get install --quiet -y build-essential git gnupg2  libcurl4 libedit2 libncurses-dev libpython3-dev  libxml2  libz3-dev pkg-config python3 python3-lldb tzdata unzip zlib1g-dev
+        else
+            sudo apt-get install --quiet -y build-essential git gnupg2  libcurl4 libedit2 libncurses-dev libpython3-dev  libxml2  libz3-dev pkg-config python3 python3-lldb tzdata unzip zlib1g-dev
+        fi
+        return
+    fi
+
+    dockerfile_url="https://raw.githubusercontent.com/apple/swift-docker/main/nightly-main/$docker_platform_name/$docker_platform_version/Dockerfile"
     dockerfile="$(curl --silent --retry 3 --location --fail $dockerfile_url)"
     # if we couldn't find Dockerfile in nightly-main use swift-ci/master version
     if [[ -z "$dockerfile" ]]; then
@@ -226,6 +236,7 @@ set_platform_debian () {
     docker_platform_name="debian"
     docker_platform_version="$1"
     package_manager="apt-get"
+    export DEBIAN_FRONTEND=noninteractive
 
     if [[ -z "$PLATFORM_NAME_PRETTY" ]]; then
         PLATFORM_NAME_PRETTY="Debian $1"
