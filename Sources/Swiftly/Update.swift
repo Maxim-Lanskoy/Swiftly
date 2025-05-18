@@ -1,9 +1,10 @@
 import ArgumentParser
 import Foundation
 import SwiftlyCore
+import SystemPackage
 
 struct Update: SwiftlyCommand {
-    public static var configuration = CommandConfiguration(
+    public static let configuration = CommandConfiguration(
         abstract: "Update an installed toolchain to a newer version."
     )
 
@@ -71,56 +72,67 @@ struct Update: SwiftlyCommand {
         written to this file as commands that can be run after the installation.
         """
     ))
-    var postInstallFile: String?
+    var postInstallFile: FilePath?
 
     private enum CodingKeys: String, CodingKey {
         case toolchain, root, verify, postInstallFile
     }
 
-    public mutating func run() async throws {
-        try validateSwiftly()
-        var config = try Config.load()
+    mutating func run() async throws {
+        try await self.run(Swiftly.createDefaultContext())
+    }
 
-        guard let parameters = try self.resolveUpdateParameters(config) else {
+    public mutating func run(_ ctx: SwiftlyCoreContext) async throws {
+        let versionUpdateReminder = try await validateSwiftly(ctx)
+        defer {
+            versionUpdateReminder()
+        }
+        try await validateLinked(ctx)
+
+        var config = try await Config.load(ctx)
+        guard let parameters = try await self.resolveUpdateParameters(ctx, &config) else {
             if let toolchain = self.toolchain {
-                SwiftlyCore.print("No installed toolchain matched \"\(toolchain)\"")
+                await ctx.print("No installed toolchain matched \"\(toolchain)\"")
             } else {
-                SwiftlyCore.print("No toolchains are currently installed")
+                await ctx.print("No toolchains are currently installed")
             }
             return
         }
 
-        guard let newToolchain = try await self.lookupNewToolchain(config, parameters) else {
-            SwiftlyCore.print("\(parameters.oldToolchain) is already up to date")
+        guard let newToolchain = try await self.lookupNewToolchain(ctx, config, parameters) else {
+            await ctx.print("\(parameters.oldToolchain) is already up to date")
             return
         }
 
         guard !config.installedToolchains.contains(newToolchain) else {
-            SwiftlyCore.print("The newest version of \(parameters.oldToolchain) (\(newToolchain)) is already installed")
+            await ctx.print("The newest version of \(parameters.oldToolchain) (\(newToolchain)) is already installed")
             return
         }
 
         if !self.root.assumeYes {
-            SwiftlyCore.print("Update \(parameters.oldToolchain) ⟶ \(newToolchain)?")
-            guard SwiftlyCore.promptForConfirmation(defaultBehavior: true) else {
-                SwiftlyCore.print("Aborting")
+            await ctx.print("Update \(parameters.oldToolchain) -> \(newToolchain)?")
+            guard await ctx.promptForConfirmation(defaultBehavior: true) else {
+                await ctx.print("Aborting")
                 return
             }
         }
 
-        let postInstallScript = try await Install.execute(
+        let (postInstallScript, pathChanged) = try await Install.execute(
+            ctx,
             version: newToolchain,
             &config,
             useInstalledToolchain: config.inUse == parameters.oldToolchain,
-            verifySignature: self.verify
+            verifySignature: self.verify,
+            verbose: self.root.verbose,
+            assumeYes: self.root.assumeYes
         )
 
-        try await Uninstall.execute(parameters.oldToolchain, &config)
-        SwiftlyCore.print("Successfully updated \(parameters.oldToolchain) ⟶ \(newToolchain)")
+        try await Uninstall.execute(ctx, parameters.oldToolchain, &config, verbose: self.root.verbose)
+        await ctx.print("Successfully updated \(parameters.oldToolchain) ⟶ \(newToolchain)")
 
-        if let postInstallScript = postInstallScript {
+        if let postInstallScript {
             guard let postInstallFile = self.postInstallFile else {
-                throw Error(message: """
+                throw SwiftlyError(message: """
 
                 There are some system dependencies that should be installed before using this toolchain.
                 You can run the following script as the system administrator (e.g. root) to prepare
@@ -130,7 +142,11 @@ struct Update: SwiftlyCommand {
                 """)
             }
 
-            try Data(postInstallScript.utf8).write(to: URL(fileURLWithPath: postInstallFile), options: .atomic)
+            try Data(postInstallScript.utf8).write(to: postInstallFile, options: .atomic)
+        }
+
+        if pathChanged {
+            await ctx.print(Messages.refreshShell)
         }
     }
 
@@ -140,7 +156,7 @@ struct Update: SwiftlyCommand {
     /// If the selector does not match an installed toolchain, this returns nil.
     /// If no selector is provided, the currently in-use toolchain will be used as the basis for the returned
     /// parameters.
-    private func resolveUpdateParameters(_ config: Config) throws -> UpdateParameters? {
+    private func resolveUpdateParameters(_ ctx: SwiftlyCoreContext, _ config: inout Config) async throws -> UpdateParameters? {
         let selector = try self.toolchain.map { try ToolchainSelector(parsing: $0) }
 
         let oldToolchain: ToolchainVersion?
@@ -151,7 +167,7 @@ struct Update: SwiftlyCommand {
             // 5.5.1 and 5.5.2 are installed (5.5.2 will be updated).
             oldToolchain = toolchains.max()
         } else {
-            oldToolchain = config.inUse
+            (oldToolchain, _) = try await selectToolchain(ctx, config: &config)
         }
 
         guard let oldToolchain else {
@@ -180,11 +196,11 @@ struct Update: SwiftlyCommand {
     }
 
     /// Tries to find a toolchain version that meets the provided parameters, if one exists.
-    /// This does not download the toolchain, but it does query the GitHub API to find the suitable toolchain.
-    private func lookupNewToolchain(_ config: Config, _ bounds: UpdateParameters) async throws -> ToolchainVersion? {
+    /// This does not download the toolchain, but it does query the swift.org API to find the suitable toolchain.
+    private func lookupNewToolchain(_ ctx: SwiftlyCoreContext, _ config: Config, _ bounds: UpdateParameters) async throws -> ToolchainVersion? {
         switch bounds {
         case let .stable(old, range):
-            return try await SwiftlyCore.httpClient.getReleaseToolchains(platform: config.platform, limit: 1) { release in
+            return try await ctx.httpClient.getReleaseToolchains(platform: config.platform, limit: 1) { release in
                 switch range {
                 case .latest:
                     return release > old
@@ -195,9 +211,18 @@ struct Update: SwiftlyCommand {
                 }
             }.first.map(ToolchainVersion.stable)
         case let .snapshot(old):
-            return try await SwiftlyCore.httpClient.getSnapshotToolchains(platform: config.platform, branch: old.branch, limit: 1) { snapshot in
-                snapshot.branch == old.branch && snapshot.date > old.date
-            }.first.map(ToolchainVersion.snapshot)
+            let newerSnapshotToolchains: [ToolchainVersion.Snapshot]
+            do {
+                newerSnapshotToolchains = try await ctx.httpClient.getSnapshotToolchains(platform: config.platform, branch: old.branch, limit: 1) { snapshot in
+                    snapshot.branch == old.branch && snapshot.date > old.date
+                }
+            } catch let branchNotFoundErr as SwiftlyHTTPClient.SnapshotBranchNotFoundError {
+                throw SwiftlyError(message: "Snapshot branch \(branchNotFoundErr.branch) cannot be updated. One possible reason for this is that there has been a new release published to swift.org and this snapshot is for an older release. Snapshots are only available for the newest release and the main branch. You can install a fresh snapshot toolchain from the either the latest release x.y (major.minor) with `swiftly install x.y-snapshot` or from the main branch with `swiftly install main-snapshot`.")
+            } catch {
+                throw error
+            }
+
+            return newerSnapshotToolchains.first.map(ToolchainVersion.snapshot)
         }
     }
 }

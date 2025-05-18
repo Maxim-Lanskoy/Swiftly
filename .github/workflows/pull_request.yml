@@ -1,0 +1,154 @@
+name: Pull Request
+
+on:
+  pull_request:
+    types: [opened, reopened, synchronize]
+  push:
+    branches: [main]
+
+env:
+  SWIFTLY_BOOTSTRAP_VERSION: 1.0.0
+
+jobs:
+  soundness:
+    name: Soundness
+    uses: swiftlang/github-workflows/.github/workflows/soundness.yml@main
+    with:
+      license_header_check_enabled: false
+      license_header_check_project_name: "Swift.org"
+      api_breakage_check_enabled: false
+      docs_check_enabled: false
+      format_check_enabled: false
+      shell_check_enabled: false
+      unacceptable_language_check_enabled: true
+
+  tests-selfhosted:
+    name: Test (Self Hosted) / ${{ matrix.container }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        container: ["ubuntu:20.04", "ubuntu:22.04", "ubuntu:24.04", "redhat/ubi9", "debian:12", "fedora:39"]
+    container:
+      image: ${{ matrix.container }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+      - name: Prepare the action
+        run: ./scripts/prep-gh-action.sh --install-swiftly
+      - name: Build and Test
+        # UBI 9 and Ubuntu 20.04 - See https://github.com/swiftlang/swift/issues/80908
+        # UBI 9 - See https://github.com/swiftlang/swift/issues/80909
+        run: bash -c 'if [[ "${{ matrix.container }}" == "redhat/ubi9" ]]; then swift build --build-tests; elif [[ "${{ matrix.container }}" == "ubuntu:20.04" ]]; then swift build --build-tests; else swift test; fi'
+
+  releasebuildcheck:
+    name: Release Build Check
+    runs-on: ubuntu-latest
+    container:
+      image: "redhat/ubi9"
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+      - name: Prepare the action
+        run: ./scripts/prep-gh-action.sh --install-swiftly
+      - name: Build Artifact
+        run: swift run build-swiftly-release --test --skip "999.0.0"
+      - name: Upload Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: swiftly-release-x86_64
+          path: .build/release/swiftly-*.tar.gz
+          if-no-files-found: error
+          retention-days: 1
+      - name: Upload Tests
+        uses: actions/upload-artifact@v4
+        with:
+          name: swiftly-tests-x86_64
+          path: .build/debug/test-swiftly-linux-x86_64.tar.gz
+          if-no-files-found: error
+          retention-days: 1
+
+  releasetest:
+    name: Test Release / ${{matrix.shell.pkg}}
+    needs: releasebuildcheck
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        shell: [
+          {"pkg": "bash", "bin": "/bin/bash"},
+          {"pkg": "zsh", "bin": "/bin/zsh"},
+          {"pkg": "fish", "bin": "/bin/fish"}
+        ]
+    container:
+      image: "ubuntu:24.04"
+    steps:
+      - name: Prepare System
+        run: apt-get update && DEBIAN_FRONTEND=noninteractive TZ=Etc/UTC apt-get -y install ca-certificates gpg tzdata ${{matrix.shell.pkg}} && chsh -s ${{matrix.shell.bin}}
+      - name: Download Release
+        uses: actions/download-artifact@v4
+        with:
+          name: swiftly-release-x86_64
+      - name: Download Tests
+        uses: actions/download-artifact@v4
+        with:
+          name: swiftly-tests-x86_64
+      - name: Extract and Run Workflow Tests
+        run: cp swiftly-*.tar.gz /root/swiftly.tar.gz && cp test-swiftly-*.tar.gz /root && cd /root && tar zxf test-swiftly-*.tar.gz && ./test-swiftly -y ./swiftly.tar.gz
+
+  release-custom-install-test:
+    name: Test Release - Custom Install Location
+    needs: releasebuildcheck
+    runs-on: ubuntu-latest
+    container:
+      image: "ubuntu:24.04"
+    steps:
+      - name: Prepare System
+        run: apt-get update && DEBIAN_FRONTEND=noninteractive TZ=Etc/UTC apt-get -y install ca-certificates gpg tzdata
+      - name: Download Release
+        uses: actions/download-artifact@v4
+        with:
+          name: swiftly-release-x86_64
+      - name: Download Tests
+        uses: actions/download-artifact@v4
+        with:
+          name: swiftly-tests-x86_64
+      - name: Extract and Run Workflow Tests
+        run: cp swiftly-*.tar.gz /root/swiftly.tar.gz && cp test-swiftly-*.tar.gz /root && cd /root && tar zxf test-swiftly-*.tar.gz && ./test-swiftly -y --custom-location ./swiftly.tar.gz
+
+  formatcheck:
+    name: Format Check
+    runs-on: ubuntu-latest
+    container:
+      image: ubuntu:22.04
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+      - name: Prepare the action
+        run: ./scripts/prep-gh-action.sh --install-swiftly
+      - name: Check format
+        run: swift run swiftformat --lint --dryrun . || (echo "Please run 'swift run swiftformat .' to format the source code."; exit 1)
+
+  docscheck:
+    name: Documentation Check
+    runs-on: ubuntu-latest
+    container:
+      image: ubuntu:24.04
+    steps:
+      - name: Install git
+        run: apt-get update && apt-get -y install git
+      - name: Checkout repository
+        uses: actions/checkout@v4
+      - name: Prepare the action
+        run: ./scripts/prep-gh-action.sh --install-swiftly
+      - name: Generate Swiftly CLI Reference and Check for Differences
+        run: swift package plugin --allow-writing-to-package-directory generate-docs-reference && bash -c 'git config --global --add safe.directory $(pwd)' && git diff --exit-code Documentation/SwiftlyDocs.docc/swiftly-cli-reference.md || (echo "The documentation hasn't been updated with the latest swiftly command-line reference. Please run `swift package plugin generate-docs-reference` and commit/push the changes."; exit 1)
+      - name: Generate Documentation Set
+        run: swift package --allow-writing-to-directory .build/docs generate-documentation --target SwiftlyDocs --output-path .build/docs
+      - name: Upload Documentation Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: swiftly-docs
+          path: .build/docs/**
+          if-no-files-found: error
+          retention-days: 1

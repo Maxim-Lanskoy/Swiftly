@@ -1,9 +1,10 @@
 import ArgumentParser
 import Foundation
 import SwiftlyCore
+import SystemPackage
 
-internal struct Init: SwiftlyCommand {
-    public static var configuration = CommandConfiguration(
+struct Init: SwiftlyCommand {
+    public static let configuration = CommandConfiguration(
         abstract: "Perform swiftly initialization into your user account."
     )
 
@@ -14,127 +15,191 @@ internal struct Init: SwiftlyCommand {
     installation is found, the swiftly executable will be updated, but the rest of the installation will not be modified.
     """)
     var overwrite: Bool = false
-    @Option(name: .long, help: "Specify the current Linux platform for swiftly.")
+    @Option(name: .long, help: "Specify the current Linux platform for swiftly")
     var platform: String?
+    @Flag(help: "Skip installing the latest toolchain")
+    var skipInstall: Bool = false
+    @Flag(help: "Quiet shell follow up commands")
+    var quietShellFollowup: Bool = false
 
     @OptionGroup var root: GlobalOptions
 
+    private enum CodingKeys: String, CodingKey {
+        case noModifyProfile, overwrite, platform, skipInstall, root, quietShellFollowup
+    }
+
     public mutating func validate() throws {}
 
-    internal mutating func run() async throws {
-        try await Self.execute(assumeYes: self.root.assumeYes, noModifyProfile: self.noModifyProfile, overwrite: self.overwrite, platform: self.platform)
+    mutating func run() async throws {
+        try await self.run(Swiftly.createDefaultContext())
+    }
+
+    mutating func run(_ ctx: SwiftlyCoreContext = Swiftly.createDefaultContext()) async throws {
+        try await Self.execute(ctx, assumeYes: self.root.assumeYes, noModifyProfile: self.noModifyProfile, overwrite: self.overwrite, platform: self.platform, verbose: self.root.verbose, skipInstall: self.skipInstall, quietShellFollowup: self.quietShellFollowup)
     }
 
     /// Initialize the installation of swiftly.
-    internal static func execute(assumeYes: Bool, noModifyProfile: Bool, overwrite: Bool, platform: String?) async throws {
-        try Swiftly.currentPlatform.verifySwiftlySystemPrerequisites()
+    static func execute(_ ctx: SwiftlyCoreContext, assumeYes: Bool, noModifyProfile: Bool, overwrite: Bool, platform: String?, verbose: Bool, skipInstall: Bool, quietShellFollowup: Bool) async throws {
+        try await Swiftly.currentPlatform.verifySwiftlySystemPrerequisites()
 
-        let config = try? Config.load()
+        var config = try? await Config.load(ctx)
 
-        if let config = config, !overwrite && config.version != SwiftlyCore.version {
-            // We don't support downgrades, and we don't yet support upgrades
-            throw Error(message: "An existing swiftly installation was detected. You can try again with '--overwrite' to overwrite it.")
+        if var config, !overwrite &&
+            (
+                config.version == SwiftlyVersion(major: 0, minor: 4, patch: 0, suffix: "dev") ||
+                    config.version == SwiftlyVersion(major: 0, minor: 4, patch: 0) ||
+                    (config.version?.major == 1 && config.version?.minor == 0)
+            )
+        {
+            // This is a simple upgrade from the 0.4.0 pre-releases, or 1.x
+
+            // Move our executable over to the correct place
+            try await Swiftly.currentPlatform.installSwiftlyBin(ctx)
+
+            // Update and save the version
+            config.version = SwiftlyCore.version
+
+            try config.save(ctx)
+
+            return
+        }
+
+        if let config, !overwrite && config.version != SwiftlyCore.version {
+            // We don't support downgrades, and versions prior to 0.4.0-dev
+            throw SwiftlyError(message: "An existing swiftly installation was detected. You can try again with '--overwrite' to overwrite it.")
         }
 
         // Give the user the prompt and the choice to abort at this point.
         if !assumeYes {
-            SwiftlyCore.print("""
-            Swiftly will be installed into the following locations:
+            let toolchainsDir = Swiftly.currentPlatform.swiftlyToolchainsDir(ctx)
 
-            \(Swiftly.currentPlatform.swiftlyHomeDir.path) - Data and configuration files directory including toolchains
-            \(Swiftly.currentPlatform.swiftlyBinDir.path) - Executables installation directory
+            var msg = """
+            Welcome to swiftly, the Swift toolchain manager for Linux and macOS!
 
-            Note that the locations can be changed with SWIFTLY_HOME and SWIFTLY_BIN environment variables and run
-            this again.
+            Please read the following information carefully before proceeding with the installation. If you
+            wish to customize the steps performed during the installation process, refer to 'swiftly init -h'
+            for configuration options.
 
-            """)
+            Swiftly installs files into the following locations:
 
-            if SwiftlyCore.readLine(prompt: "Proceed with the installation? [Y/n] ") == "n" {
-                throw Error(message: "Swiftly installation has been cancelled")
+            \(Swiftly.currentPlatform.swiftlyHomeDir(ctx)) - Directory for configuration files
+            \(Swiftly.currentPlatform.swiftlyBinDir(ctx)) - Links to the binaries of the active toolchain
+            \(toolchainsDir) - Directory hosting installed toolchains
+
+            These locations can be changed by setting the environment variables
+            SWIFTLY_HOME_DIR, SWIFTLY_BIN_DIR, and SWIFTLY_TOOLCHAINS_DIR before running 'swiftly init' again.
+
+            """
+#if os(macOS)
+            if toolchainsDir != fs.home / "Library/Developer/Toolchains" {
+                msg += """
+
+                NOTE: The toolchains are not being installed in a standard macOS location, so Xcode may not be able to find them.
+                """
+            }
+#endif
+            if !skipInstall {
+                msg += """
+
+                Once swiftly is set up, it will install the latest available Swift toolchain. This can be
+                suppressed with the '--skip-install' option.
+                """
+#if os(Linux)
+                msg += """
+                 In the process, swiftly will add swift.org
+                GnuPG keys into your keychain to verify the integrity of the downloads.
+
+                """
+#else
+                msg += "\n"
+#endif
+            }
+            if !noModifyProfile {
+                msg += """
+
+                For your convenience, swiftly will also attempt to modify your shell's profile file to make
+                installed items available in your environment upon login. This can be suppressed with the
+                '--no-modify-profile' option.
+
+                """
+            }
+
+            await ctx.print(msg)
+
+            guard await ctx.promptForConfirmation(defaultBehavior: true) else {
+                throw SwiftlyError(message: "swiftly installation has been cancelled")
             }
         }
 
-        let shell = if let s = ProcessInfo.processInfo.environment["SHELL"] {
-            s
+        let shell = if let mockedShell = ctx.mockedShell {
+            mockedShell
         } else {
-            try await Swiftly.currentPlatform.getShell()
+            if let s = ProcessInfo.processInfo.environment["SHELL"] {
+                s
+            } else {
+                try await Swiftly.currentPlatform.getShell()
+            }
         }
 
-        let envFile: URL
+        let envFile: FilePath
         let sourceLine: String
         if shell.hasSuffix("fish") {
-            envFile = Swiftly.currentPlatform.swiftlyHomeDir.appendingPathComponent("env.fish", isDirectory: false)
+            envFile = Swiftly.currentPlatform.swiftlyHomeDir(ctx) / "env.fish"
             sourceLine = """
 
             # Added by swiftly
-            source "\(envFile.path)"
+            source "\(envFile)"
             """
         } else {
-            envFile = Swiftly.currentPlatform.swiftlyHomeDir.appendingPathComponent("env.sh", isDirectory: false)
+            envFile = Swiftly.currentPlatform.swiftlyHomeDir(ctx) / "env.sh"
             sourceLine = """
 
             # Added by swiftly
-            . "\(envFile.path)"
+            . "\(envFile)"
             """
         }
 
         if overwrite {
-            try? FileManager.default.removeItem(at: Swiftly.currentPlatform.swiftlyToolchainsDir)
-            try? FileManager.default.removeItem(at: Swiftly.currentPlatform.swiftlyHomeDir)
+            try? await fs.remove(atPath: Swiftly.currentPlatform.swiftlyToolchainsDir(ctx))
+            try? await fs.remove(atPath: Swiftly.currentPlatform.swiftlyHomeDir(ctx))
         }
 
         // Go ahead and create the directories as needed
-        for requiredDir in Swiftly.requiredDirectories {
-            if !requiredDir.fileExists() {
+        for requiredDir in Swiftly.requiredDirectories(ctx) {
+            if !(try await fs.exists(atPath: requiredDir)) {
                 do {
-                    try FileManager.default.createDirectory(at: requiredDir, withIntermediateDirectories: true)
+                    try await fs.mkdir(.parents, atPath: requiredDir)
                 } catch {
-                    throw Error(message: "Failed to create required directory \"\(requiredDir.path)\": \(error)")
+                    throw SwiftlyError(message: "Failed to create required directory \"\(requiredDir)\": \(error)")
                 }
             }
         }
 
         // Force the configuration to be present. Generate it if it doesn't already exist or overwrite is set
         if overwrite || config == nil {
-            let pd = try await Swiftly.currentPlatform.detectPlatform(disableConfirmation: assumeYes, platform: platform)
-            var config = Config(inUse: nil, installedToolchains: [], platform: pd)
+            let pd = try await Swiftly.currentPlatform.detectPlatform(ctx, disableConfirmation: assumeYes, platform: platform)
+            var c = Config(inUse: nil, installedToolchains: [], platform: pd)
             // Stamp the current version of swiftly on this config
-            config.version = SwiftlyCore.version
-            try config.save()
+            c.version = SwiftlyCore.version
+            try c.save(ctx)
+            config = c
         }
 
-        let swiftlyBin = Swiftly.currentPlatform.swiftlyBinDir.appendingPathComponent("swiftly", isDirectory: false)
+        guard var config else { throw SwiftlyError(message: "Configuration could not be set") }
 
-        let cmd = URL(fileURLWithPath: CommandLine.arguments[0])
-        let systemManaged = try Swiftly.currentPlatform.isSystemManagedBinary(cmd.path)
+        // Move our executable over to the correct place
+        try await Swiftly.currentPlatform.installSwiftlyBin(ctx)
 
-        // Don't move the binary if it's already in the right place, this is being invoked inside an xctest, or it is a system managed binary
-        if cmd != swiftlyBin && !cmd.path.hasSuffix("xctest") && !systemManaged {
-            SwiftlyCore.print("Moving swiftly into the installation directory...")
+        let envFileExists = try await fs.exists(atPath: envFile)
 
-            if swiftlyBin.fileExists() {
-                if !overwrite {
-                    throw Error(message: "Swiftly binary already exists. You can try again with `--overwrite` to replace it.")
-                } else {
-                    try FileManager.default.removeItem(at: swiftlyBin)
-                }
-            }
-
-            do {
-                try FileManager.default.moveItem(at: cmd, to: swiftlyBin)
-            } catch {
-                try FileManager.default.copyItem(at: cmd, to: swiftlyBin)
-                SwiftlyCore.print("Swiftly has been copied into the installation directory. You can remove '\(cmd.path)'. It is no longer needed.")
-            }
-        }
-
-        if overwrite || !FileManager.default.fileExists(atPath: envFile.path) {
-            SwiftlyCore.print("Creating shell environment file for the user...")
+        if overwrite || !envFileExists {
+            await ctx.print("Creating shell environment file for the user...")
             var env = ""
             if shell.hasSuffix("fish") {
                 env = """
-                set -x SWIFTLY_HOME_DIR "\(Swiftly.currentPlatform.swiftlyHomeDir.path)"
-                set -x SWIFTLY_BIN_DIR "\(Swiftly.currentPlatform.swiftlyBinDir.path)"
+                set -x SWIFTLY_HOME_DIR "\(Swiftly.currentPlatform.swiftlyHomeDir(ctx))"
+                set -x SWIFTLY_BIN_DIR "\(Swiftly.currentPlatform.swiftlyBinDir(ctx))"
+                set -x SWIFTLY_TOOLCHAINS_DIR "\(Swiftly.currentPlatform.swiftlyToolchainsDir(ctx))"
                 if not contains "$SWIFTLY_BIN_DIR" $PATH
                     set -x PATH "$SWIFTLY_BIN_DIR" $PATH
                 end
@@ -142,8 +207,9 @@ internal struct Init: SwiftlyCommand {
                 """
             } else {
                 env = """
-                export SWIFTLY_HOME_DIR="\(Swiftly.currentPlatform.swiftlyHomeDir.path)"
-                export SWIFTLY_BIN_DIR="\(Swiftly.currentPlatform.swiftlyBinDir.path)"
+                export SWIFTLY_HOME_DIR="\(Swiftly.currentPlatform.swiftlyHomeDir(ctx))"
+                export SWIFTLY_BIN_DIR="\(Swiftly.currentPlatform.swiftlyBinDir(ctx))"
+                export SWIFTLY_TOOLCHAINS_DIR="\(Swiftly.currentPlatform.swiftlyToolchainsDir(ctx))"
                 if [[ ":$PATH:" != *":$SWIFTLY_BIN_DIR:"* ]]; then
                     export PATH="$SWIFTLY_BIN_DIR:$PATH"
                 fi
@@ -155,40 +221,40 @@ internal struct Init: SwiftlyCommand {
         }
 
         if !noModifyProfile {
-            SwiftlyCore.print("Updating profile...")
+            await ctx.print("Updating profile...")
 
-            let userHome = FileManager.default.homeDirectoryForCurrentUser
+            let userHome = ctx.mockedHomeDir ?? fs.home
 
-            let profileHome: URL
+            let profileHome: FilePath
             if shell.hasSuffix("zsh") {
-                profileHome = userHome.appendingPathComponent(".zprofile", isDirectory: false)
+                profileHome = userHome / ".zprofile"
             } else if shell.hasSuffix("bash") {
-                if case let p = userHome.appendingPathComponent(".bash_profile", isDirectory: false), FileManager.default.fileExists(atPath: p.path) {
+                if case let p = userHome / ".bash_profile", try await fs.exists(atPath: p) {
                     profileHome = p
-                } else if case let p = userHome.appendingPathComponent(".bash_login", isDirectory: false), FileManager.default.fileExists(atPath: p.path) {
+                } else if case let p = userHome / ".bash_login", try await fs.exists(atPath: p) {
                     profileHome = p
                 } else {
-                    profileHome = userHome.appendingPathComponent(".profile", isDirectory: false)
+                    profileHome = userHome / ".profile"
                 }
             } else if shell.hasSuffix("fish") {
-                if let xdgConfigHome = ProcessInfo.processInfo.environment["XDG_CONFIG_HOME"], case let xdgConfigURL = URL(fileURLWithPath: xdgConfigHome) {
-                    let confDir = xdgConfigURL.appendingPathComponent("fish/conf.d", isDirectory: true)
-                    try FileManager.default.createDirectory(at: confDir, withIntermediateDirectories: true)
-                    profileHome = confDir.appendingPathComponent("swiftly.fish", isDirectory: false)
+                if let xdgConfigHome = ProcessInfo.processInfo.environment["XDG_CONFIG_HOME"], case let xdgConfigURL = FilePath(xdgConfigHome) {
+                    let confDir = xdgConfigURL / "fish/conf.d"
+                    try await fs.mkdir(.parents, atPath: confDir)
+                    profileHome = confDir / "swiftly.fish"
                 } else {
-                    let confDir = userHome.appendingPathComponent(".config/fish/conf.d", isDirectory: true)
-                    try FileManager.default.createDirectory(at: confDir, withIntermediateDirectories: true)
-                    profileHome = confDir.appendingPathComponent("swiftly.fish", isDirectory: false)
+                    let confDir = userHome / ".config/fish/conf.d"
+                    try await fs.mkdir(.parents, atPath: confDir)
+                    profileHome = confDir / "swiftly.fish"
                 }
             } else {
-                profileHome = userHome.appendingPathComponent(".profile", isDirectory: false)
+                profileHome = userHome / ".profile"
             }
 
             var addEnvToProfile = false
             do {
-                if !FileManager.default.fileExists(atPath: profileHome.path) {
+                if !(try await fs.exists(atPath: profileHome)) {
                     addEnvToProfile = true
-                } else if case let profileContents = try String(contentsOf: profileHome), !profileContents.contains(sourceLine) {
+                } else if case let profileContents = try String(contentsOf: profileHome, encoding: .utf8), !profileContents.contains(sourceLine) {
                     addEnvToProfile = true
                 }
             } catch {
@@ -197,12 +263,41 @@ internal struct Init: SwiftlyCommand {
 
             if addEnvToProfile {
                 try Data(sourceLine.utf8).append(to: profileHome)
-
-                SwiftlyCore.print("""
-                To begin using installed swiftly from your current shell, first run the following command:
-                    \(sourceLine)
-                """)
             }
+        }
+
+        var postInstall: String?
+        var pathChanged = false
+
+        if !skipInstall {
+            let latestVersion = try await Install.resolve(ctx, config: config, selector: ToolchainSelector.latest)
+            (postInstall, pathChanged) = try await Install.execute(ctx, version: latestVersion, &config, useInstalledToolchain: true, verifySignature: true, verbose: verbose, assumeYes: assumeYes)
+        }
+
+        if !quietShellFollowup {
+            await ctx.print("""
+            To begin using installed swiftly from your current shell, first run the following command:
+                \(sourceLine)
+
+            """)
+        }
+
+        // Fish doesn't have path caching, so this might only be needed for bash/zsh
+        if pathChanged && !quietShellFollowup && !shell.hasSuffix("fish") {
+            await ctx.print("""
+            Your shell caches items on your path for better performance. Swiftly has added
+            items to your path that may not get picked up right away. You can update your
+            shell's environment by running
+
+            hash -r
+
+            or restarting your shell.
+
+            """)
+        }
+
+        if let postInstall {
+            await ctx.print(Messages.postInstall(postInstall))
         }
     }
 }

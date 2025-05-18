@@ -1,49 +1,97 @@
-# Getting Started with Swiftly
+# Getting started with swiftly
 
-To download swiftly and install Swift, run the following in your terminal, then follow the on-screen instructions:
+Start using swiftly and Swift.
+
+To get started with swiftly you can download it from [swift.org](https://swift.org/download), and extract the package.
+
+@TabNavigator {
+    @Tab("Linux") {
+        If you are using Linux then you can download the binary:
+
+        ```
+        curl -L https://download.swift.org/swiftly/linux/swiftly-$(uname -m).tar.gz > swiftly.tar.gz
+        tar zxf swiftly.tar.gz
+        ```
+
+        Now run swiftly init to finish the installation:
+
+        ```
+        ./swiftly init
+        ```
+    }
+
+    @Tab("macOS") {
+        On macOS you can either run the pkg installer from the command-line like this or run the package by double-clicking on it (not recommended):
+
+        ```
+        curl -L https://download.swift.org/swiftly/darwin/swiftly.pkg > swiftly.pkg
+        installer -pkg swiftly.pkg -target CurrentUserHomeDirectory
+        ```
+
+        Once the package is installed, run `swiftly init` to finish the installation:
+
+        ```
+        ~/.swiftly/bin/swiftly init
+        ```
+    }
+}
+
+Swiftly installs itself and downloads the latest available Swift toolchain.
+Follow the prompts for any additional steps that may be required.
+Once everything is done you can begin using swift.
 
 ```
-curl -L https://swiftlang.github.io/swiftly/swiftly-install.sh | bash
+$ swift --version
+
+Swift version 6.0.3 (swift-6.0.3-RELEASE)
+...
+
+$ swift build        # Build with the latest (6.0.3) toolchain
 ```
 
-Alternatively, you can download the swiftly binary and install itself like this:
+You can install (and use) another release toolchain:
 
 ```
-swiftly init
-```
-
-Once swiftly is installed you can use it to install the latest available swift toolchain like this:
-
-```
-$ swiftly install latest
-
-Fetching the latest stable Swift release...
-Installing Swift 5.8.1
-Downloaded 488.5 MiB of 488.5 MiB
-Extracting toolchain...
-Swift 5.8.1 installed successfully!
+$ swiftly install --use 5.10
 
 $ swift --version
 
-Swift version 5.8.1 (swift-5.8.1-RELEASE)
-Target: x86_64-unknown-linux-gnu
+Swift version 5.10.1 (swift-5.10.1-RELEASE)
+...
+
+$ swift build    # Build with the 5.10.1 toolchain
 ```
 
-Or, you can install (and use) a swift release:
-
-```
-$ swiftly install --use 5.7
-
-$ swift --version
-
-Swift version 5.7.2 (swift-5.7.2-RELEASE)
-Target: x86_64-unknown-linux-gnu
-```
-
-There's also an option to install the latest snapshot release and get access to the latest features:
+Quickly test your package with the latest nightly snapshot to prepare for the next release:
 
 ```
 $ swiftly install main-snapshot
+$ swiftly run swift test +main-snapshot   # Run "swift test" with the main-snapshot toolchain
+$ swift build                             # Continue to build with my usual toolchain
 ```
 
-> Note: This last example just installed the toolchain. You can run "swiftly use" to switch to it and other installed toolchahins when you're ready.
+Uninstall this toolchain after you're finished with it:
+
+```
+$ swiftly uninstall main-snapshot
+```
+
+## Installing toolchains through an HTTP proxy
+
+Swiftly downloads a list of toolchains from https://www.swift.org/ and retrieves them from CDN via https://download.swift.org.
+If your environment requires a proxy, Swiftly attempts to use the standard environment variables `http_proxy`, `HTTP_PROXY`, `https_proxy` or `HTTPS_PROXY` to determine which proxy server to use instead of making a direct connection.
+
+To download latest nightly snapshot using a proxy:
+```
+$ export https_proxy=http://proxy:3128
+$ swiftly install main-snapshot
+```
+
+## See Also:
+
+- [Add shell autocompletions](shell-autocompletion)
+- [Install Toolchains](install-toolchains)
+- [Using Toolchains](use-toolchains)
+- [Uninstall Toolchains](uninstall-toolchains)
+- [Swiftly CLI Reference](swiftly-cli-reference)
+

@@ -23,7 +23,7 @@ swiftly [--version] [--help]
 Install a new toolchain.
 
 ```
-swiftly install <version> [--use] [--token=<token>] [--verify] [--post-install-file=<post-install-file>] [--version] [--help]
+swiftly install [<version>] [--use] [--verify|no-verify] [--post-install-file=<post-install-file>] [--assume-yes] [--verbose] [--version] [--help]
 ```
 
 **version:**
@@ -53,21 +53,21 @@ Likewise, the latest snapshot associated with a given development branch can be 
     $ swiftly install 5.7-snapshot
     $ swiftly install main-snapshot
 
+Install whatever toolchain is currently selected, such as the the one in the .swift-version file:
+
+    $ swiftly install
+
+NOTE: Swiftly downloads toolchains to a temporary file that it later cleans during its installation process. If these files are too big for your system temporary directory, set another location by setting the `TMPDIR` environment variable.
+
+    $ TMPDIR=/large/file/tmp/storage swiftly install latest
+
 
 **--use:**
 
 *Mark the newly installed toolchain as in-use.*
 
 
-**--token=\<token\>:**
-
-*A GitHub authentication token to use for any GitHub API requests.*
-
-This is useful to avoid GitHub's low rate limits. If an installation
-fails with an "unauthorized" status code, it likely means the rate limit has been hit.
-
-
-**--verify:**
+**--verify|no-verify:**
 
 *Verify the toolchain's PGP signature before proceeding with installation.*
 
@@ -76,8 +76,18 @@ fails with an "unauthorized" status code, it likely means the rate limit has bee
 
 *A file path to a location for a post installation script*
 
-If the toolchain that is installed has extra post installation steps they they will be
+If the toolchain that is installed has extra post installation steps, they will be
 written to this file as commands that can be run after the installation.
+
+
+**--assume-yes:**
+
+*Disable confirmation prompts by assuming 'yes'*
+
+
+**--verbose:**
+
+*Enable verbose reporting from swiftly*
 
 
 **--version:**
@@ -117,12 +127,12 @@ Likewise, the available toolchains associated with a given minor version can be 
 
     $ swiftly list-available 5.2
 
-The installed snapshots for a given devlopment branch can be listed by specifying the branch as the selector:
+The installed snapshots for a given development branch can be listed by specifying the branch as the selector:
 
     $ swiftly list-available main-snapshot
-    $ swiftly list-available 6.0-snapshot
+    $ swiftly list-available x.y-snapshot
 
-Note that listing available snapshots before 6.0 is unsupported.
+Note that listing available snapshots before the latest release (major and minor number) is unsupported.
 
 
 **--version:**
@@ -139,18 +149,38 @@ Note that listing available snapshots before 6.0 is unsupported.
 
 ## use
 
-Set the active toolchain. If no toolchain is provided, print the currently in-use toolchain, if any.
+Set the in-use or default toolchain. If no toolchain is provided, print the currently in-use toolchain, if any.
 
 ```
-swiftly use [<toolchain>] [--version] [--help]
+swiftly use [--print-location] [--global-default] [--assume-yes] [--verbose] [<toolchain>] [--version] [--help]
 ```
+
+**--print-location:**
+
+*Print the location of the in-use toolchain. This is valid only when there is no toolchain argument.*
+
+
+**--global-default:**
+
+*Set the global default toolchain that is used when there are no .swift-version files.*
+
+
+**--assume-yes:**
+
+*Disable confirmation prompts by assuming 'yes'*
+
+
+**--verbose:**
+
+*Enable verbose reporting from swiftly*
+
 
 **toolchain:**
 
 *The toolchain to use.*
 
 
-If no toolchain is provided, the currently in-use toolchain will be printed, if any:
+If no toolchain is provided, the currently in-use toolchain will be printed, if any. This is based on the current working directory and `.swift-version` files if one is present. If the in-use toolchain is also the global default then it will be shown as the default.
 
     $ swiftly use
 
@@ -194,7 +224,7 @@ Likewise, the latest snapshot associated with a given development branch can be 
 Remove an installed toolchain.
 
 ```
-swiftly uninstall <toolchain> [--assume-yes] [--version] [--help]
+swiftly uninstall <toolchain> [--assume-yes] [--verbose] [--version] [--help]
 ```
 
 **toolchain:**
@@ -202,7 +232,7 @@ swiftly uninstall <toolchain> [--assume-yes] [--version] [--help]
 *The toolchain(s) to uninstall.*
 
 
-The toolchain selector provided determines which toolchains to uninstall. Specific toolchains can be uninstalled by using their full names as the selector, for example a full stable release version with patch (a.b.c): 
+The toolchain selector provided determines which toolchains to uninstall. Specific toolchains can be uninstalled by using their full names as the selector, for example a full stable release version with patch (a.b.c):
 
     $ swiftly uninstall 5.2.1
 
@@ -231,6 +261,11 @@ Finally, all installed toolchains can be uninstalled by specifying 'all':
 **--assume-yes:**
 
 *Disable confirmation prompts by assuming 'yes'*
+
+
+**--verbose:**
+
+*Enable verbose reporting from swiftly*
 
 
 **--version:**
@@ -270,7 +305,7 @@ Likewise, the installed toolchains associated with a given minor version can be 
 
     $ swiftly list 5.2
 
-The installed snapshots for a given devlopment branch can be listed by specifying the branch as the selector:
+The installed snapshots for a given development branch can be listed by specifying the branch as the selector:
 
     $ swiftly list main-snapshot
     $ swiftly list 5.7-snapshot
@@ -293,7 +328,7 @@ The installed snapshots for a given devlopment branch can be listed by specifyin
 Update an installed toolchain to a newer version.
 
 ```
-swiftly update [<toolchain>] [--assume-yes] [--verify] [--post-install-file=<post-install-file>] [--version] [--help]
+swiftly update [<toolchain>] [--assume-yes] [--verbose] [--verify|no-verify] [--post-install-file=<post-install-file>] [--version] [--help]
 ```
 
 **toolchain:**
@@ -339,7 +374,12 @@ A specific snapshot toolchain can be updated by including the date:
 *Disable confirmation prompts by assuming 'yes'*
 
 
-**--verify:**
+**--verbose:**
+
+*Enable verbose reporting from swiftly*
+
+
+**--verify|no-verify:**
 
 *Verify the toolchain's PGP signature before proceeding with installation.*
 
@@ -369,7 +409,7 @@ written to this file as commands that can be run after the installation.
 Perform swiftly initialization into your user account.
 
 ```
-swiftly init [--no-modify-profile] [--overwrite] [--platform=<platform>] [--assume-yes] [--version] [--help]
+swiftly init [--no-modify-profile] [--overwrite] [--platform=<platform>] [--skip-install] [--quiet-shell-followup] [--assume-yes] [--verbose] [--version] [--help]
 ```
 
 **--no-modify-profile:**
@@ -384,12 +424,27 @@ swiftly init [--no-modify-profile] [--overwrite] [--platform=<platform>] [--assu
 
 **--platform=\<platform\>:**
 
-*Specify the current Linux platform for swiftly.*
+*Specify the current Linux platform for swiftly*
+
+
+**--skip-install:**
+
+*Skip installing the latest toolchain*
+
+
+**--quiet-shell-followup:**
+
+*Quiet shell follow up commands*
 
 
 **--assume-yes:**
 
 *Disable confirmation prompts by assuming 'yes'*
+
+
+**--verbose:**
+
+*Enable verbose reporting from swiftly*
 
 
 **--version:**
@@ -409,8 +464,152 @@ swiftly init [--no-modify-profile] [--overwrite] [--platform=<platform>] [--assu
 Update the version of swiftly itself.
 
 ```
-swiftly self-update [--version] [--help]
+swiftly self-update [--assume-yes] [--verbose] [--version] [--help]
 ```
+
+**--assume-yes:**
+
+*Disable confirmation prompts by assuming 'yes'*
+
+
+**--verbose:**
+
+*Enable verbose reporting from swiftly*
+
+
+**--version:**
+
+*Show the version.*
+
+
+**--help:**
+
+*Show help information.*
+
+
+
+
+## run
+
+Run a command while proxying to the selected toolchain commands.
+
+```
+swiftly run <command>... [--version] [--help]
+```
+
+**command:**
+
+*Run a command while proxying to the selected toolchain commands.*
+
+
+Run a command with a selected toolchain. The toolchain commands become the default in the system path.
+
+You can run one of the usual toolchain commands directly:
+
+    $ swiftly run swift build
+
+Or you can run another program (or script) that runs one or more toolchain commands:
+
+    $ CC=clang swiftly run make  # Builds targets using clang
+    $ swiftly run ./build-things.sh  # Script invokes 'swift build' to create certain product binaries
+
+Toolchain selection is determined by swift version files `.swift-version`, with a default global as the fallback. See the `swiftly use` command for more details.
+
+You can also override the selection mechanisms temporarily for the duration of the command using a special syntax. An argument prefixed with a '+' will be treated as the selector.
+
+    $ swiftly run swift build +latest
+    $ swiftly run swift build +5.10.1
+
+The first command builds the swift package with the latest toolchain and the second selects the 5.10.1 toolchain. Note that if these aren't installed then run will fail with an error message. You can pre-install the toolchain using `swiftly install <toolchain>` to ensure success.
+
+If the command that you are running needs the arguments with the '+' prefixes then you can escape it by doubling the '++'.
+
+    $ swiftly run ./myscript.sh ++abcde
+
+The script will receive the argument as '+abcde'. If there are multiple arguments with the '+' prefix that should be escaped you can disable the selection using a '++' argument, which turns off any selector argument processing for subsequent arguments. This is analogous to the '--' that turns off flag and option processing for subsequent arguments in many argument parsers.
+
+    $ swiftly run ./myscript.sh ++ +abcde +xyz
+
+The script will receive the argument '+abcde' followed by '+xyz'.
+
+
+**--version:**
+
+*Show the version.*
+
+
+**--help:**
+
+*Show help information.*
+
+
+
+
+## link
+
+Link swiftly so it resumes management of the active toolchain.
+
+```
+swiftly link [<toolchain-selector>] [--assume-yes] [--verbose] [--version] [--help]
+```
+
+**toolchain-selector:**
+
+*Links swiftly if it has been disabled.*
+
+
+Links swiftly if it has been disabled.
+
+
+**--assume-yes:**
+
+*Disable confirmation prompts by assuming 'yes'*
+
+
+**--verbose:**
+
+*Enable verbose reporting from swiftly*
+
+
+**--version:**
+
+*Show the version.*
+
+
+**--help:**
+
+*Show help information.*
+
+
+
+
+## unlink
+
+Unlinks swiftly so it no longer manages the active toolchain.
+
+```
+swiftly unlink [<toolchain-selector>] [--assume-yes] [--verbose] [--version] [--help]
+```
+
+**toolchain-selector:**
+
+*Unlinks swiftly, allowing the system default toolchain to be used.*
+
+
+Unlinks swiftly until swiftly is linked again with:
+
+    $ swiftly link
+
+
+**--assume-yes:**
+
+*Disable confirmation prompts by assuming 'yes'*
+
+
+**--verbose:**
+
+*Enable verbose reporting from swiftly*
+
 
 **--version:**
 

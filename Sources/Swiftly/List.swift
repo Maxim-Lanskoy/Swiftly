@@ -2,7 +2,7 @@ import ArgumentParser
 import SwiftlyCore
 
 struct List: SwiftlyCommand {
-    public static var configuration = CommandConfiguration(
+    public static let configuration = CommandConfiguration(
         abstract: "List installed toolchains."
     )
 
@@ -25,7 +25,7 @@ struct List: SwiftlyCommand {
 
             $ swiftly list 5.2
 
-        The installed snapshots for a given devlopment branch can be listed by specifying the branch as the selector:
+        The installed snapshots for a given development branch can be listed by specifying the branch as the selector:
 
             $ swiftly list main-snapshot
             $ swiftly list 5.7-snapshot
@@ -33,63 +33,72 @@ struct List: SwiftlyCommand {
     ))
     var toolchainSelector: String?
 
-    internal mutating func run() async throws {
-        try validateSwiftly()
+    mutating func run() async throws {
+        try await self.run(Swiftly.createDefaultContext())
+    }
+
+    mutating func run(_ ctx: SwiftlyCoreContext) async throws {
+        let versionUpdateReminder = try await validateSwiftly(ctx)
+        defer {
+            versionUpdateReminder()
+        }
+
+        var config = try await Config.load(ctx)
         let selector = try self.toolchainSelector.map { input in
             try ToolchainSelector(parsing: input)
         }
 
-        let config = try Config.load()
-
         let toolchains = config.listInstalledToolchains(selector: selector).sorted { $0 > $1 }
-        let activeToolchain = config.inUse
+        let (inUse, _) = try await selectToolchain(ctx, config: &config)
 
         let printToolchain = { (toolchain: ToolchainVersion) in
             var message = "\(toolchain)"
-            if toolchain == activeToolchain {
+            if let inUse, toolchain == inUse {
                 message += " (in use)"
             }
-            SwiftlyCore.print(message)
+            if toolchain == config.inUse {
+                message += " (default)"
+            }
+            await ctx.print(message)
         }
 
         if let selector {
-            let modifier: String
-            switch selector {
+            let modifier = switch selector {
             case let .stable(major, minor, nil):
                 if let minor {
-                    modifier = "Swift \(major).\(minor) release"
+                    "Swift \(major).\(minor) release"
                 } else {
-                    modifier = "Swift \(major) release"
+                    "Swift \(major) release"
                 }
             case .snapshot(.main, nil):
-                modifier = "main development snapshot"
+                "main development snapshot"
             case let .snapshot(.release(major, minor), nil):
-                modifier = "\(major).\(minor) development snapshot"
+                "\(major).\(minor) development snapshot"
             default:
-                modifier = "matching"
+                "matching"
             }
 
             let message = "Installed \(modifier) toolchains"
-            SwiftlyCore.print(message)
-            SwiftlyCore.print(String(repeating: "-", count: message.count))
+            await ctx.print(message)
+            await ctx.print(String(repeating: "-", count: message.count))
             for toolchain in toolchains {
-                printToolchain(toolchain)
+                await printToolchain(toolchain)
             }
         } else {
-            SwiftlyCore.print("Installed release toolchains")
-            SwiftlyCore.print("----------------------------")
+            await ctx.print("Installed release toolchains")
+            await ctx.print("----------------------------")
             for toolchain in toolchains {
                 guard toolchain.isStableRelease() else {
                     continue
                 }
-                printToolchain(toolchain)
+                await printToolchain(toolchain)
             }
 
-            SwiftlyCore.print("")
-            SwiftlyCore.print("Installed snapshot toolchains")
-            SwiftlyCore.print("-----------------------------")
+            await ctx.print("")
+            await ctx.print("Installed snapshot toolchains")
+            await ctx.print("-----------------------------")
             for toolchain in toolchains where toolchain.isSnapshot() {
-                printToolchain(toolchain)
+                await printToolchain(toolchain)
             }
         }
     }
