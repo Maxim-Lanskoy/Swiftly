@@ -1,5 +1,6 @@
 import ArgumentParser
 import Foundation
+import Subprocess
 import SwiftlyCore
 
 @main
@@ -32,19 +33,18 @@ public enum Proxy {
 
                     if CommandLine.arguments.count == 1 {
                         // User ran swiftly with no extra arguments in an uninstalled environment, so we jump directly into
-                        //  an simple init.
+                        //  a simple init.
                         try await Init.execute(ctx, assumeYes: false, noModifyProfile: false, overwrite: false, platform: nil, verbose: false, skipInstall: false, quietShellFollowup: false)
                         return
-                    } else if CommandLine.arguments.count >= 2 && CommandLine.arguments[1] == "init" {
-                        // Let the user run the init command with their arguments, if any.
+                    } else if CommandLine.arguments.count >= 2 && ["init", "--generate-completion-script"].contains(CommandLine.arguments[1]) {
+                        // Let the user run the init command or completion script generation with arguments, if any.
                         await Swiftly.main()
                         return
-                    } else if CommandLine.arguments.count == 2 && (CommandLine.arguments[1] == "--help" || CommandLine.arguments[1] == "--experimental-dump-help") {
-                        // Allow the showing of help information
+                    } else if CommandLine.arguments.count == 2 && ["--help", "--experimental-dump-help"].contains(CommandLine.arguments[1]) {
+                        // Just print help information.
                         await Swiftly.main()
                         return
                     } else {
-                        // We've been invoked outside the "init" subcommand and we're not yet configured.
                         // This will throw if the configuration couldn't be loaded and give the user an actionable message.
                         throw err
                     }
@@ -68,16 +68,37 @@ public enum Proxy {
             guard ProcessInfo.processInfo.environment["SWIFTLY_PROXY_IN_PROGRESS"] == nil else {
                 throw SwiftlyError(message: "Circular swiftly proxy invocation")
             }
-            let env = ["SWIFTLY_PROXY_IN_PROGRESS": "1"]
 
-            try await Swiftly.currentPlatform.proxy(ctx, toolchain, binName, Array(CommandLine.arguments[1...]), env)
+            let env = try await Swiftly.currentPlatform.proxyEnvironment(ctx, env: .inherit, toolchain: toolchain)
+
+            let cmdConfig = Configuration(
+                .name(binName),
+                arguments: Arguments(Array(CommandLine.arguments[1...])),
+                environment: env.updating(["SWIFTLY_PROXY_IN_PROGRESS": "1"])
+            )
+
+            let cmdResult = try await Subprocess.run(
+                cmdConfig,
+                input: .standardInput,
+                output: .standardOutput,
+                error: .standardError
+            )
+
+            if !cmdResult.terminationStatus.isSuccess {
+                throw RunProgramError(terminationStatus: cmdResult.terminationStatus, config: cmdConfig)
+            }
         } catch let terminated as RunProgramError {
-            exit(terminated.exitCode)
+            switch terminated.terminationStatus {
+            case let .exited(code):
+                exit(code)
+            case .unhandledException:
+                exit(1)
+            }
         } catch let error as SwiftlyError {
-            await ctx.print(error.message)
+            await ctx.message(error.message)
             exit(1)
         } catch {
-            await ctx.print("\(error)")
+            await ctx.message("\(error)")
             exit(1)
         }
     }

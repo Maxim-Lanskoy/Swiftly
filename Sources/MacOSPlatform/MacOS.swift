@@ -1,4 +1,5 @@
 import Foundation
+import Subprocess
 import SwiftlyCore
 import SystemPackage
 
@@ -47,11 +48,35 @@ public struct MacOS: Platform {
     }
 
     public func verifySystemPrerequisitesForInstall(
-        _: SwiftlyCoreContext, platformName _: String, version _: ToolchainVersion,
+        _ ctx: SwiftlyCoreContext, platformName _: String, version _: ToolchainVersion,
         requireSignatureValidation _: Bool
     ) async throws -> String? {
-        // All system prerequisites should be there for macOS
-        nil
+        // Ensure that there is in fact a macOS SDK installed so the toolchain is usable.
+        let result = try await run(
+            .path(SystemPackage.FilePath("/usr/bin/xcrun")),
+            arguments: ["--show-sdk-path", "--sdk", "macosx"],
+            output: .string(limit: 1024 * 10)
+        )
+
+        // Simply print warnings to the user stdout rather than returning a shell script, as there is not a simple
+        // shell script for installing developer tools on macOS.
+        if !result.terminationStatus.isSuccess {
+            await ctx.print("""
+            \nWARNING: Could not find a macOS SDK on the system. A macOS SDK is required for the toolchain to work correctly. Please install one via Xcode (https://developer.apple.com/xcode) or run the following command on your machine to install the Command Line Tools for Xcode:
+            xcode-select --install
+
+            More information on installing the Command Line Tools can be found here: https://developer.apple.com/documentation/xcode/installing-the-command-line-tools/#Install-the-Command-Line-Tools-package-in-Terminal. If developer tools are located at a non-default location on disk, use the following command to specify the Xcode that you wish to use for Command Line Tools for Xcode:
+            sudo xcode-select --switch path/to/Xcode.app\n
+            """)
+        }
+
+        let sdkPath = result.standardOutput?.replacingOccurrences(of: "\n", with: "")
+
+        if sdkPath == nil {
+            await ctx.print("WARNING: Could not read output of '/usr/bin/xcrun --show-sdk-path --sdk macosx'. Ensure your macOS SDK is installed properly for the swift toolchain to work.")
+        }
+
+        return nil
     }
 
     public func install(
@@ -69,12 +94,12 @@ public struct MacOS: Platform {
 
         if toolchainsDir == self.defaultToolchainsDirectory {
             // If the toolchains go into the default user location then we use the installer to install them
-            await ctx.print("Installing package in user home directory...")
+            await ctx.message("Installing package in user home directory...")
 
-            try await sys.installer(.verbose, pkg: tmpFile, target: "CurrentUserHomeDirectory").run(self, quiet: !verbose)
+            try await sys.installer(.verbose, .pkg(tmpFile), .target("CurrentUserHomeDirectory")).run()
         } else {
             // Otherwise, we extract the pkg into the requested toolchains directory.
-            await ctx.print("Expanding pkg...")
+            await ctx.message("Expanding pkg...")
             let tmpDir = fs.mktemp()
             let toolchainDir = toolchainsDir / "\(version.identifier).xctoolchain"
 
@@ -82,9 +107,9 @@ public struct MacOS: Platform {
                 try await fs.mkdir(atPath: toolchainDir)
             }
 
-            await ctx.print("Checking package signature...")
+            await ctx.message("Checking package signature...")
             do {
-                try await sys.pkgutil().checkSignature(pkgPath: tmpFile).run(self, quiet: !verbose)
+                try await sys.pkgutil().checksignature(pkg_path: tmpFile).run(quiet: !verbose)
             } catch {
                 // If this is not a test that uses mocked toolchains then we must throw this error and abort installation
                 guard ctx.mockedHomeDir != nil else {
@@ -92,9 +117,9 @@ public struct MacOS: Platform {
                 }
 
                 // We permit the signature verification to fail during testing
-                await ctx.print("Signature verification failed, which is allowable during testing with mocked toolchains")
+                await ctx.message("Signature verification failed, which is allowable during testing with mocked toolchains")
             }
-            try await sys.pkgutil(.verbose).expand(pkgPath: tmpFile, dirPath: tmpDir).run(self, quiet: !verbose)
+            try await sys.pkgutil(.verbose).expand(pkg_path: tmpFile, dir_path: tmpDir).run(quiet: !verbose)
 
             // There's a slight difference in the location of the special Payload file between official swift packages
             // and the ones that are mocked here in the test framework.
@@ -103,8 +128,8 @@ public struct MacOS: Platform {
                 payload = tmpDir / "\(version.identifier)-osx-package.pkg/Payload"
             }
 
-            await ctx.print("Untarring pkg Payload...")
-            try await sys.tar(.directory(toolchainDir)).extract(.verbose, .archive(payload)).run(self, quiet: !verbose)
+            await ctx.message("Untarring pkg Payload...")
+            try await sys.tar(.directory(toolchainDir)).extract(.verbose, .archive(payload)).run(quiet: !verbose)
         }
     }
 
@@ -116,12 +141,12 @@ public struct MacOS: Platform {
         let userHomeDir = ctx.mockedHomeDir ?? fs.home
 
         if ctx.mockedHomeDir == nil {
-            await ctx.print("Extracting the swiftly package...")
+            await ctx.message("Extracting the swiftly package...")
             try await sys.installer(
-                pkg: archive,
-                target: "CurrentUserHomeDirectory"
-            )
-            try? await sys.pkgutil(.volume(userHomeDir)).forget(packageId: "org.swift.swiftly").run(self)
+                .pkg(archive),
+                .target("CurrentUserHomeDirectory")
+            ).run()
+            try? await sys.pkgutil(.volume(userHomeDir)).forget(pkg_id: "org.swift.swiftly").run()
         } else {
             let installDir = userHomeDir / ".swiftly"
             try await fs.mkdir(.parents, atPath: installDir)
@@ -129,7 +154,7 @@ public struct MacOS: Platform {
             // In the case of a mock for testing purposes we won't use the installer, perferring a manual process because
             //  the installer will not install to an arbitrary path, only a volume or user home directory.
             let tmpDir = fs.mktemp()
-            try await sys.pkgutil().expand(pkgPath: archive, dirPath: tmpDir).run(self)
+            try await sys.pkgutil().expand(pkg_path: archive, dir_path: tmpDir).run()
 
             // There's a slight difference in the location of the special Payload file between official swift packages
             // and the ones that are mocked here in the test framework.
@@ -138,18 +163,24 @@ public struct MacOS: Platform {
                 throw SwiftlyError(message: "Payload file could not be found at \(tmpDir).")
             }
 
-            await ctx.print("Extracting the swiftly package into \(installDir)...")
-            try await sys.tar(.directory(installDir)).extract(.verbose, .archive(payload)).run(self, quiet: false)
+            await ctx.message("Extracting the swiftly package into \(installDir)...")
+            try await sys.tar(.directory(installDir)).extract(.verbose, .archive(payload)).run(quiet: false)
         }
 
-        try self.runProgram((userHomeDir / ".swiftly/bin/swiftly").string, "init")
+        let config = Configuration(
+            .path(FilePath((userHomeDir / ".swiftly/bin/swiftly").string)), arguments: ["init"]
+        )
+        let result = try await run(config, input: .standardInput, output: .standardOutput, error: .standardError)
+        if !result.terminationStatus.isSuccess {
+            throw RunProgramError(terminationStatus: result.terminationStatus, config: config)
+        }
     }
 
     public func uninstall(_ ctx: SwiftlyCoreContext, _ toolchain: ToolchainVersion, verbose: Bool)
         async throws
     {
         if verbose {
-            await ctx.print("Uninstalling package in user home directory... ")
+            await ctx.message("Uninstalling package in user home directory... ")
         }
 
         let toolchainDir = self.swiftlyToolchainsDir(ctx) / "\(toolchain.identifier).xctoolchain"
@@ -164,7 +195,7 @@ public struct MacOS: Platform {
 
         try await fs.remove(atPath: toolchainDir)
 
-        try? await sys.pkgutil(.volume(fs.home)).forget(packageId: pkgInfo.CFBundleIdentifier).run(self, quiet: !verbose)
+        try? await sys.pkgutil(.volume(fs.home)).forget(pkg_id: pkgInfo.CFBundleIdentifier).run(quiet: !verbose)
     }
 
     public func getExecutableName() -> String {
@@ -193,7 +224,7 @@ public struct MacOS: Platform {
     }
 
     public func getShell() async throws -> String {
-        for (key, value) in try await sys.dscl(datasource: ".").read(path: fs.home, keys: "UserShell").properties(self) {
+        for (_, value) in try await sys.dscl(datasource: ".").read(path: fs.home, key: ["UserShell"]).properties(self) {
             return value
         }
 
@@ -201,9 +232,16 @@ public struct MacOS: Platform {
         return "/bin/zsh"
     }
 
-    public func findToolchainLocation(_ ctx: SwiftlyCoreContext, _ toolchain: ToolchainVersion) -> FilePath
+    public func findToolchainLocation(_ ctx: SwiftlyCoreContext, _ toolchain: ToolchainVersion) async throws -> FilePath
     {
-        self.swiftlyToolchainsDir(ctx) / "\(toolchain.identifier).xctoolchain"
+        if toolchain == .xcodeVersion {
+            // Print the toolchain location with the help of xcrun
+            if let xcrunLocation = try? await run(.path(FilePath("/usr/bin/xcrun")), arguments: ["-f", "swift"], output: .string(limit: 1024 * 10)).standardOutput {
+                return FilePath(xcrunLocation.replacingOccurrences(of: "\n", with: "")).removingLastComponent().removingLastComponent().removingLastComponent()
+            }
+        }
+
+        return self.swiftlyToolchainsDir(ctx) / "\(toolchain.identifier).xctoolchain"
     }
 
     public static let currentPlatform: any Platform = MacOS()

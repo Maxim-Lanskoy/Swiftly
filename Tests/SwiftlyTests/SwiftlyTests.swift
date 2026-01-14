@@ -2,6 +2,7 @@ import _StringProcessing
 import ArgumentParser
 import Foundation
 import OpenAPIRuntime
+import Subprocess
 @testable import Swiftly
 @testable import SwiftlyCore
 import SwiftlyWebsiteAPI
@@ -25,24 +26,9 @@ extension Tag {
     @Tag static var large: Self
 }
 
-extension Executable {
+extension Subprocess.Executable {
     public func exists() async throws -> Bool {
-        switch self.storage {
-        case let .path(p):
-            return (try await FileSystem.exists(atPath: p))
-        case let .executable(e):
-            let path = ProcessInfo.processInfo.environment["PATH"]
-
-            guard let path else { return false }
-
-            for p in path.split(separator: ":") {
-                if try await FileSystem.exists(atPath: FilePath(String(p)) / e) {
-                    return true
-                }
-            }
-
-            return false
-        }
+        (try? self.resolveExecutablePath(in: .inherit)) != nil
     }
 }
 
@@ -89,7 +75,8 @@ extension SwiftlyCoreContext {
         mockedHomeDir: FilePath?,
         httpRequestExecutor: HTTPRequestExecutor,
         outputHandler: (any OutputHandler)?,
-        inputProvider: (any InputProvider)?
+        inputProvider: (any InputProvider)?,
+        format: SwiftlyCore.OutputFormat = .text
     ) {
         self.init(httpClient: SwiftlyHTTPClient(httpRequestExecutor: httpRequestExecutor))
 
@@ -98,6 +85,7 @@ extension SwiftlyCoreContext {
         self.httpClient = SwiftlyHTTPClient(httpRequestExecutor: httpRequestExecutor)
         self.outputHandler = outputHandler
         self.inputProvider = inputProvider
+        self.format = format
     }
 }
 
@@ -159,6 +147,27 @@ extension Trait where Self == MockedSwiftlyVersionTrait {
     static func mockedSwiftlyVersion(_ name: String = "testHome") -> Self { Self(name) }
 }
 
+struct WithShellTrait: TestTrait, TestScoping {
+    let shell: String
+
+    init(_ shell: String) {
+        self.shell = shell
+    }
+
+    func provideScope(for _: Test, testCase _: Test.Case?, performing function: @Sendable () async throws -> Void) async throws {
+        var ctx = SwiftlyTests.ctx
+        ctx.mockedShell = self.shell
+        try await SwiftlyTests.$ctx.withValue(ctx) {
+            try await function()
+        }
+    }
+}
+
+extension Trait where Self == WithShellTrait {
+    /// Run the test with the provided shell.
+    static func withShell(_ shell: String) -> Self { Self(shell) }
+}
+
 struct MockHomeToolchainsTrait: TestTrait, TestScoping {
     var name: String = "testHome"
     var toolchains: Set<ToolchainVersion> = .allToolchains()
@@ -218,7 +227,8 @@ public enum SwiftlyTests {
         return Config(
             inUse: nil,
             installedToolchains: [],
-            platform: pd
+            platform: pd,
+            version: SwiftlyCore.version
         )
     }
 
@@ -234,9 +244,11 @@ public enum SwiftlyTests {
         try await cmd.run(Self.ctx)
     }
 
+    public struct NoError: Error {}
+
     /// Run this command, using the provided input as the stdin (in lines). Returns an array of captured
     /// output lines.
-    static func runWithMockedIO<T: SwiftlyCommand>(_ commandType: T.Type, _ arguments: [String], quiet: Bool = false, input: [String]? = nil) async throws -> [String] {
+    static func runWithMockedIO<T: SwiftlyCommand, E: Error>(_ commandType: T.Type, _ arguments: [String], quiet: Bool = false, input: [String]? = nil, format: SwiftlyCore.OutputFormat = .text, throws expectedError: E.Type = NoError.self) async throws -> [String] {
         let handler = TestOutputHandler(quiet: quiet)
         let provider: (any InputProvider)? = if let input {
             TestInputProvider(lines: input)
@@ -248,7 +260,8 @@ public enum SwiftlyTests {
             mockedHomeDir: SwiftlyTests.ctx.mockedHomeDir,
             httpRequestExecutor: SwiftlyTests.ctx.httpClient.httpRequestExecutor,
             outputHandler: handler,
-            inputProvider: provider
+            inputProvider: provider,
+            format: format
         )
 
         let rawCmd = try Swiftly.parseAsRoot(arguments)
@@ -259,7 +272,13 @@ public enum SwiftlyTests {
             )
         }
 
-        try await cmd.run(ctx)
+        if expectedError != NoError.self {
+            try await #expect(throws: expectedError) {
+                try await cmd.run(ctx)
+            }
+        } else {
+            try await cmd.run(ctx)
+        }
 
         return await handler.lines
     }
@@ -332,6 +351,7 @@ public enum SwiftlyTests {
                 if cleanBinDir {
                     try await fs.remove(atPath: Swiftly.currentPlatform.swiftlyBinDir(Self.ctx))
                 }
+                throw error
             }
         }
     }
@@ -958,13 +978,13 @@ public final actor MockToolchainDownloader: HTTPRequestExecutor {
         let pkg = tmp / "swiftly.pkg"
 
         try await sys.pkgbuild(
-            .installLocation("swiftly"),
+            .install_location("swiftly"),
             .version("\(self.latestSwiftlyVersion)"),
             .identifier("org.swift.swiftly"),
-            root: swiftlyDir,
-            packageOutputPath: pkg
+            .root(swiftlyDir),
+            package_output_path: pkg
         )
-        .run(Swiftly.currentPlatform)
+        .run()
 
         let data = try Data(contentsOf: pkg)
         try await fs.remove(atPath: tmp)
@@ -1005,13 +1025,13 @@ public final actor MockToolchainDownloader: HTTPRequestExecutor {
         let pkg = tmp / "toolchain.pkg"
 
         try await sys.pkgbuild(
-            .installLocation(FilePath("Library/Developer/Toolchains/\(toolchain.identifier).xctoolchain")),
+            .install_location(FilePath("Library/Developer/Toolchains/\(toolchain.identifier).xctoolchain")),
             .version("\(toolchain.name)"),
             .identifier(pkgInfo.CFBundleIdentifier),
-            root: toolchainDir,
-            packageOutputPath: pkg
+            .root(toolchainDir),
+            package_output_path: pkg
         )
-        .run(Swiftly.currentPlatform)
+        .run()
 
         let pkgData = try Data(contentsOf: pkg)
         try await fs.remove(atPath: tmp)

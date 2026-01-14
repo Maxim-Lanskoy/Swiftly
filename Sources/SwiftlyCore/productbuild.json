@@ -1,0 +1,108 @@
+{
+  "serializationVersion": 0,
+  "command": {
+    "commandName": "productbuild",
+    "abstract": "Build a product archive for the macOS Installer or the Mac App Store. See productbuild(1) for more information.",
+    "shouldDisplay": true,
+    "arguments": [
+      {
+        "names": [
+          {
+            "kind": "long",
+            "name": "synthesize"
+          }
+        ],
+        "preferredName": {
+          "kind": "long",
+          "name": "synthesize"
+        },
+        "parsingStrategy": "default",
+        "valueName": "synthesize",
+        "isOptional": true,
+        "isRepeating": false,
+        "kind": "flag",
+        "shouldDisplay": true
+      },
+      {
+        "names": [
+          {
+            "kind": "long",
+            "name": "distribution"
+          }
+        ],
+        "preferredName": {
+          "kind": "long",
+          "name": "distribution"
+        },
+        "parsingStrategy": "default",
+        "valueName": "dist-path",
+        "isOptional": true,
+        "isRepeating": false,
+        "kind": "option",
+        "shouldDisplay": true
+      },
+      {
+        "names": [
+          {
+            "kind": "long",
+            "name": "package"
+          }
+        ],
+        "preferredName": {
+          "kind": "long",
+          "name": "package"
+        },
+        "parsingStrategy": "default",
+        "valueName": "pkg-path",
+        "isOptional": false,
+        "isRepeating": false,
+        "kind": "option",
+        "shouldDisplay": true
+      },
+      {
+        "names": [
+          {
+            "kind": "long",
+            "name": "package-path"
+          }
+        ],
+        "preferredName": {
+          "kind": "long",
+          "name": "package-path"
+        },
+        "parsingStrategy": "default",
+        "valueName": "search-path",
+        "isOptional": true,
+        "isRepeating": false,
+        "kind": "option",
+        "shouldDisplay": true
+      },
+      {
+        "names": [
+          {
+            "kind": "long",
+            "name": "sign"
+          }
+        ],
+        "preferredName": {
+          "kind": "long",
+          "name": "sign"
+        },
+        "parsingStrategy": "default",
+        "valueName": "cert",
+        "isOptional": true,
+        "isRepeating": false,
+        "kind": "option",
+        "shouldDisplay": true
+      },
+      {
+        "parsingStrategy": "default",
+        "valueName": "output-path",
+        "isOptional": false,
+        "isRepeating": false,
+        "kind": "positional",
+        "shouldDisplay": true
+      }
+    ]
+  }
+}

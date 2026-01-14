@@ -60,7 +60,7 @@ public enum FileSystem {
         case mode(Int)
     }
 
-    public static func create(_ options: CreateOptions..., file: FilePath, contents: Data?) async throws {
+    public static func create(_ options: CreateOptions..., file: FilePath, contents: Data? = nil) async throws {
         try await Self.create(options, file: file, contents: contents)
     }
 
@@ -81,6 +81,10 @@ public enum FileSystem {
 
     public static func readlink(atPath: FilePath) async throws -> FilePath {
         try FileManager.default.destinationOfSymbolicLink(atPath: atPath)
+    }
+
+    public static func isSymLink(atPath: FilePath) async throws -> Bool {
+        try FileManager.default.attributesOfItem(atPath: atPath.string)[.type] as? FileAttributeType == .typeSymbolicLink
     }
 
     public static func symlink(atPath: FilePath, linkPath: FilePath) async throws {

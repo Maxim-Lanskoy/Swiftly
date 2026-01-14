@@ -23,7 +23,7 @@ swiftly [--version] [--help]
 Install a new toolchain.
 
 ```
-swiftly install [<version>] [--use] [--verify|no-verify] [--post-install-file=<post-install-file>] [--assume-yes] [--verbose] [--version] [--help]
+swiftly install [<version>] [--use] [--verify] [--no-verify] [--post-install-file=<post-install-file>] [--progress-file=<progress-file>] [--format=<format>] [--assume-yes] [--verbose] [--version] [--help]
 ```
 
 **version:**
@@ -67,9 +67,14 @@ NOTE: Swiftly downloads toolchains to a temporary file that it later cleans duri
 *Mark the newly installed toolchain as in-use.*
 
 
-**--verify|no-verify:**
+**--verify:**
 
-*Verify the toolchain's PGP signature before proceeding with installation.*
+*Verify (or not) the toolchain's PGP signature before proceeding with installation.*
+
+
+**--no-verify:**
+
+*Verify (or not) the toolchain's PGP signature before proceeding with installation.*
 
 
 **--post-install-file=\<post-install-file\>:**
@@ -78,6 +83,20 @@ NOTE: Swiftly downloads toolchains to a temporary file that it later cleans duri
 
 If the toolchain that is installed has extra post installation steps, they will be
 written to this file as commands that can be run after the installation.
+
+
+**--progress-file=\<progress-file\>:**
+
+*A file path where progress information will be written in JSONL format*
+
+Progress information will be appended to this file as JSON objects, one per line.
+Each progress entry contains timestamp, progress percentage, and a descriptive message.
+The file must be writable, else an error will be thrown.
+
+
+**--format=\<format\>:**
+
+*Output format (text, json)*
 
 
 **--assume-yes:**
@@ -107,7 +126,7 @@ written to this file as commands that can be run after the installation.
 List toolchains available for install.
 
 ```
-swiftly list-available [<toolchain-selector>] [--version] [--help]
+swiftly list-available [<toolchain-selector>] [--format=<format>] [--version] [--help]
 ```
 
 **toolchain-selector:**
@@ -135,6 +154,11 @@ The installed snapshots for a given development branch can be listed by specifyi
 Note that listing available snapshots before the latest release (major and minor number) is unsupported.
 
 
+**--format=\<format\>:**
+
+*Output format (text, json)*
+
+
 **--version:**
 
 *Show the version.*
@@ -152,7 +176,7 @@ Note that listing available snapshots before the latest release (major and minor
 Set the in-use or default toolchain. If no toolchain is provided, print the currently in-use toolchain, if any.
 
 ```
-swiftly use [--print-location] [--global-default] [--assume-yes] [--verbose] [<toolchain>] [--version] [--help]
+swiftly use [--print-location] [--global-default] [--format=<format>] [--assume-yes] [--verbose] [<toolchain>] [--version] [--help]
 ```
 
 **--print-location:**
@@ -163,6 +187,11 @@ swiftly use [--print-location] [--global-default] [--assume-yes] [--verbose] [<t
 **--global-default:**
 
 *Set the global default toolchain that is used when there are no .swift-version files.*
+
+
+**--format=\<format\>:**
+
+*Output format (text, json)*
 
 
 **--assume-yes:**
@@ -206,6 +235,10 @@ Likewise, the latest snapshot associated with a given development branch can be 
     $ swiftly use 5.7-snapshot
     $ swiftly use main-snapshot
 
+macOS ONLY: There is a special selector for swiftly to use your Xcode toolchain. If there are multiple versions of Xcode then swiftly will use the currently selected toolchain from xcode-select.
+
+    $ swiftly use xcode
+
 
 **--version:**
 
@@ -224,21 +257,25 @@ Likewise, the latest snapshot associated with a given development branch can be 
 Remove an installed toolchain.
 
 ```
-swiftly uninstall <toolchain> [--assume-yes] [--verbose] [--version] [--help]
+swiftly uninstall <toolchains>... [--assume-yes] [--verbose] [--version] [--help]
 ```
 
-**toolchain:**
+**toolchains:**
 
 *The toolchain(s) to uninstall.*
 
 
-The toolchain selector provided determines which toolchains to uninstall. Specific toolchains can be uninstalled by using their full names as the selector, for example a full stable release version with patch (a.b.c):
+The list of toolchain selectors determines which toolchains to uninstall. Specific toolchains can be uninstalled by using their full names as the selector, for example a full stable release version with patch (a.b.c):
 
     $ swiftly uninstall 5.2.1
 
 Or a full snapshot name with date (a.b-snapshot-YYYY-mm-dd):
 
     $ swiftly uninstall 5.7-snapshot-2022-06-20
+
+Multiple toolchain selectors can uninstall multiple toolchains at once:
+
+    $ swiftly uninstall 5.2.1 6.0.1
 
 Less specific selectors can be used to uninstall multiple toolchains at once. For instance, the patch version can be omitted to uninstall all toolchains associated with a given minor version release:
 
@@ -285,7 +322,7 @@ Finally, all installed toolchains can be uninstalled by specifying 'all':
 List installed toolchains.
 
 ```
-swiftly list [<toolchain-selector>] [--version] [--help]
+swiftly list [<toolchain-selector>] [--format=<format>] [--version] [--help]
 ```
 
 **toolchain-selector:**
@@ -311,6 +348,11 @@ The installed snapshots for a given development branch can be listed by specifyi
     $ swiftly list 5.7-snapshot
 
 
+**--format=\<format\>:**
+
+*Output format (text, json)*
+
+
 **--version:**
 
 *Show the version.*
@@ -328,7 +370,7 @@ The installed snapshots for a given development branch can be listed by specifyi
 Update an installed toolchain to a newer version.
 
 ```
-swiftly update [<toolchain>] [--assume-yes] [--verbose] [--verify|no-verify] [--post-install-file=<post-install-file>] [--version] [--help]
+swiftly update [<toolchain>] [--assume-yes] [--verbose] [--verify] [--no-verify] [--post-install-file=<post-install-file>] [--version] [--help]
 ```
 
 **toolchain:**
@@ -379,9 +421,14 @@ A specific snapshot toolchain can be updated by including the date:
 *Enable verbose reporting from swiftly*
 
 
-**--verify|no-verify:**
+**--verify:**
 
-*Verify the toolchain's PGP signature before proceeding with installation.*
+*Verify (or not) the toolchain's PGP signature before proceeding with installation.*
+
+
+**--no-verify:**
+
+*Verify (or not) the toolchain's PGP signature before proceeding with installation.*
 
 
 **--post-install-file=\<post-install-file\>:**
@@ -464,7 +511,7 @@ swiftly init [--no-modify-profile] [--overwrite] [--platform=<platform>] [--skip
 Update the version of swiftly itself.
 
 ```
-swiftly self-update [--assume-yes] [--verbose] [--version] [--help]
+swiftly self-update [--assume-yes] [--verbose]  [--version] [--help]
 ```
 
 **--assume-yes:**
@@ -531,6 +578,36 @@ The script will receive the argument as '+abcde'. If there are multiple argument
     $ swiftly run ./myscript.sh ++ +abcde +xyz
 
 The script will receive the argument '+abcde' followed by '+xyz'.
+
+
+**--version:**
+
+*Show the version.*
+
+
+**--help:**
+
+*Show help information.*
+
+
+
+
+## self-uninstall
+
+Uninstall swiftly itself.
+
+```
+swiftly self-uninstall [--assume-yes] [--verbose] [--version] [--help]
+```
+
+**--assume-yes:**
+
+*Disable confirmation prompts by assuming 'yes'*
+
+
+**--verbose:**
+
+*Enable verbose reporting from swiftly*
 
 
 **--version:**
@@ -619,6 +696,24 @@ Unlinks swiftly until swiftly is linked again with:
 **--help:**
 
 *Show help information.*
+
+
+
+
+## help
+
+Show subcommand help information.
+
+```
+swiftly help [<subcommands>...]  [--version]
+```
+
+**subcommands:**
+
+
+**--version:**
+
+*Show the version.*
 
 
 

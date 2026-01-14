@@ -1,4 +1,4 @@
-// swift-tools-version:6.0
+// swift-tools-version:6.2
 
 import PackageDescription
 
@@ -31,6 +31,7 @@ let package = Package(
         .package(url: "https://github.com/apple/swift-openapi-generator", from: "1.7.2"),
         .package(url: "https://github.com/apple/swift-openapi-runtime", from: "1.8.2"),
         .package(url: "https://github.com/apple/swift-system", from: "1.4.2"),
+        .package(url: "https://github.com/swiftlang/swift-subprocess", exact: "0.2.1", traits: []),
         // This dependency provides the correct version of the formatter so that you can run `swift run swiftformat Package.swift Plugins/ Sources/ Tests/`
         .package(url: "https://github.com/nicklockwood/SwiftFormat", exact: "0.49.18"),
     ],
@@ -67,8 +68,10 @@ let package = Package(
                 .product(name: "OpenAPIRuntime", package: "swift-openapi-runtime"),
                 .product(name: "OpenAPIAsyncHTTPClient", package: "swift-openapi-async-http-client"),
                 .product(name: "SystemPackage", package: "swift-system"),
+                .product(name: "Subprocess", package: "swift-subprocess"),
             ],
-            swiftSettings: swiftSettings
+            swiftSettings: swiftSettings,
+            plugins: ["GenerateCommandModels"]
         ),
         .target(
             name: "SwiftlyDownloadAPI",
@@ -107,6 +110,13 @@ let package = Package(
             ),
             dependencies: ["generate-docs-reference"]
         ),
+        .plugin(
+            name: "GenerateCommandModels",
+            capability: .buildTool(),
+            dependencies: [
+                "generate-command-models",
+            ]
+        ),
         .executableTarget(
             name: "generate-docs-reference",
             dependencies: [
@@ -115,14 +125,24 @@ let package = Package(
             path: "Tools/generate-docs-reference"
         ),
         .executableTarget(
+            name: "generate-command-models",
+            dependencies: [
+                .product(name: "ArgumentParser", package: "swift-argument-parser"),
+                .product(name: "SystemPackage", package: "swift-system"),
+            ],
+            path: "Tools/generate-command-models"
+        ),
+        .executableTarget(
             name: "build-swiftly-release",
             dependencies: [
                 .target(name: "SwiftlyCore"),
                 .target(name: "LinuxPlatform", condition: .when(platforms: [.linux])),
                 .target(name: "MacOSPlatform", condition: .when(platforms: [.macOS])),
                 .product(name: "ArgumentParser", package: "swift-argument-parser"),
+                .product(name: "_NIOFileSystem", package: "swift-nio"),
             ],
-            path: "Tools/build-swiftly-release"
+            path: "Tools/build-swiftly-release",
+            exclude: ["musl-clang"],
         ),
         .target(
             name: "LinuxPlatform",
